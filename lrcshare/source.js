@@ -358,7 +358,10 @@ function buildStructuredFromVersions(lyricLines, fields, song) {
   // TTML head 扩展透传（Lyrico structured 扩展协议顶层字段，需新版宿主支持；旧版宿主忽略未知字段不受影响）：
   // agents = 演唱者列表（写回 TTML head <ttm:agent>，行级 ttm:agent 引用其 id）；
   // metadata = head 元数据元素树（songwriters/amll:meta，官方 key 按规范写回、非官方原样透传）；
-  // timing = 词级时间标志（写回根 <tt itunes:timing="...">）
+  // timing = 词级时间标志（写回根 <tt itunes:timing="...">）；
+  // language/translatedLang/romanizationLang = 轨语言码（BCP47 原样输出不折叠，
+  //   如 zh-Hans / zh-Latn-jyutping，写回根 xml:lang 与对应轨元素的 xml:lang）。
+  //   取值优先级：head.language（原文根 xml:lang，最权威）→ 版本 ttml_lang（BCP47 输出码）→ 版本 lang（站内码兜底）
   if (lyricLines.agents && lyricLines.agents.length) {
     out.agents = lyricLines.agents;
   }
@@ -368,6 +371,24 @@ function buildStructuredFromVersions(lyricLines, fields, song) {
   if (lyricLines.timing) {
     out.timing = lyricLines.timing;
   }
+  var originalLang = lyricLines.language
+    || (originalVer && (originalVer.ttml_lang || originalVer.lang))
+    || "";
+  if (originalLang) {
+    out.language = originalLang;
+  }
+  // 翻译/音译轨语言码：多语言版本合并轨取首个非空（结构化协议是单一语言码字段；
+  // 混合多语言译文合并场景下无法逐行标注，首个版本语言码已覆盖绝大多数场景）
+  var translatedLang = "";
+  var romanizationLang = "";
+  for (var wi = 0; wi < versions.length; wi++) {
+    var wv = versions[wi];
+    var wvLang = wv.ttml_lang || wv.lang || "";
+    if (wv.kind === "translation" && !translatedLang && wvLang) translatedLang = wvLang;
+    if (wv.kind === "romanization" && !romanizationLang && wvLang) romanizationLang = wvLang;
+  }
+  if (translatedLang) out.translatedLang = translatedLang;
+  if (romanizationLang) out.romanizationLang = romanizationLang;
   return out;
 }
 
