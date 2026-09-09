@@ -314,7 +314,8 @@ function buildStructuredFromVersions(lyricLines, fields, song) {
   }
 
   var translatedLines = translatedRows.length ? plainToLines(translatedRows) : null;
-  var romanLines = romanRows.length ? plainToLines(romanRows) : null;
+  // 音译支持词级（逐字注音）：行内含 <偏移ms> 词标签时输出词数组（与 original 同构），否则整行
+  var romanLines = romanRows.length ? originalToLines(romanRows) : null;
   Platform.log.warn("LrcShare", "translated rows=" + translatedRows.length + " lines=" + (translatedLines ? translatedLines.length : 0) + " romanLines=" + (romanLines ? romanLines.length : 0));
 
   return {
