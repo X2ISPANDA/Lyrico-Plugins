@@ -255,7 +255,8 @@ function plainToLines(rows) {
   return lines;
 }
 
-/** 行表 rows → Lyrico original Line[]（含词标签则逐词，否则整行） */
+/** 行表 rows → Lyrico original Line[]（含词标签则逐词，否则整行）；
+ *  行级扩展（TTML 源拆行携带的 agent/song_part）→ 宿主 structured 扩展协议 Line 第 4 元素 */
 function originalToLines(rows) {
   var timed = (rows || []).filter(function (r) { return r.time_ms != null; })
     .sort(function (a, b) { return a.time_ms - b.time_ms; });
@@ -264,10 +265,16 @@ function originalToLines(rows) {
     var start = timed[i].time_ms;
     var end = (i + 1 < timed.length) ? timed[i + 1].time_ms : start + 3000;
     var text = timed[i].text;
-    if (/<\d{1,6}>/.test(text)) {
-      lines.push([start, end, wordsOf(text, start, end)]);
+    var body = /<\d{1,6}>/.test(text) ? wordsOf(text, start, end) : text;
+    // 行级扩展属性（API lyric_lines 行 agent/song_part → Line 第 4 元素）：
+    // ttm:agent = 演唱者引用（配合顶层 agents 列表）；itunes:songPart = 段落标注（宿主按连续值重建 div 分组）
+    var ext = null;
+    if (timed[i].agent) { ext = ext || {}; ext["ttm:agent"] = String(timed[i].agent); }
+    if (timed[i].song_part) { ext = ext || {}; ext["itunes:songPart"] = String(timed[i].song_part); }
+    if (ext) {
+      lines.push([start, end, body, ext]);
     } else {
-      lines.push([start, end, text]);
+      lines.push([start, end, body]);
     }
   }
   return lines;
@@ -318,13 +325,23 @@ function buildStructuredFromVersions(lyricLines, fields, song) {
   var romanLines = romanRows.length ? originalToLines(romanRows) : null;
   Platform.log.warn("LrcShare", "translated rows=" + translatedRows.length + " lines=" + (translatedLines ? translatedLines.length : 0) + " romanLines=" + (romanLines ? romanLines.length : 0));
 
-  return {
+  var out = {
     type: "structured",
     tags: buildTags(fields, song),
     original: original,
     translated: translatedLines,
     romanization: romanLines
   };
+  // TTML head 扩展透传（Lyrico structured 扩展协议顶层字段，需新版宿主支持；旧版宿主忽略未知字段不受影响）：
+  // agents = 演唱者列表（写回 TTML head <ttm:agent>，行级 ttm:agent 引用其 id）；
+  // metadata = head 元数据元素树（songwriters/amll:meta，官方 key 按规范写回、非官方原样透传）
+  if (lyricLines.agents && lyricLines.agents.length) {
+    out.agents = lyricLines.agents;
+  }
+  if (lyricLines.metadata && lyricLines.metadata.length) {
+    out.metadata = lyricLines.metadata;
+  }
+  return out;
 }
 
 /** 单首歌 → 结构化歌词（优先多语言 versions；回退 raw LRC 解析） */
