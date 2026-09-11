@@ -249,6 +249,44 @@ function wordsOf(text, lineStart, lineEnd) {
   return words;
 }
 
+/** 将行表 row.rubies（API 词级注音投影）注入逐词数组的第 4 元素：
+ *  API 形态 [{word_index, syllables:[[起点ms,终点ms,"注音"],...]}]（稀疏，仅带注音的词）
+ *  → Lyrico structured 词第 4 元素 [[起点ms,终点Ms,"注音"],...]（多音节原样，时间可缺省为 null）。
+ *  - word_index 首选直接对齐 wordsOf 解析下标；词标签编码中无时间词可能与相邻片段合并，
+ *    造成下标错位，此时用首音节起点时间在解析结果中退化匹配（注音词必带词时间标签）；
+ *  - 音节文本必填非空、时间必须是数字（否则该时间位传 null，宿主写回时按词时间兜底）；
+ *  - 纯增量：任一项无法对齐只跳过该项，不影响词基础数据；words/rubies 任一非数组直接返回 */
+function applyWordRubies(words, rubies) {
+  if (!Array.isArray(words) || !Array.isArray(rubies) || rubies.length === 0) return;
+  for (var i = 0; i < rubies.length; i++) {
+    var item = rubies[i];
+    if (!item || !Array.isArray(item.syllables) || item.syllables.length === 0) continue;
+    var syllables = [];
+    for (var j = 0; j < item.syllables.length; j++) {
+      var sy = item.syllables[j];
+      if (!Array.isArray(sy) || sy.length < 3 || sy[2] == null || sy[2] === "") continue;
+      syllables.push([
+        typeof sy[0] === "number" ? sy[0] : null,
+        typeof sy[1] === "number" ? sy[1] : null,
+        String(sy[2])
+      ]);
+    }
+    if (syllables.length === 0) continue;
+    var idx = item.word_index;
+    var target = (typeof idx === "number" && idx >= 0 && idx < words.length) ? words[idx] : null;
+    // 下标词起点与首音节起点不符（无时间词被合并错位）→ 按词起点绝对时间退化查找
+    if (!target || (syllables[0][0] != null && target[0] !== syllables[0][0])) {
+      target = null;
+      if (syllables[0][0] != null) {
+        for (var k = 0; k < words.length; k++) {
+          if (words[k][0] === syllables[0][0]) { target = words[k]; break; }
+        }
+      }
+    }
+    if (target) target[3] = syllables;
+  }
+}
+
 /** 行表 rows → Lyrico 整行 Line[]（translated/romanization 用，剥词标签） */
 function plainToLines(rows) {
   var timed = (rows || []).filter(function (r) { return r.time_ms != null; })
@@ -285,6 +323,8 @@ function originalToLines(rows) {
       : ((i + 1 < timed.length) ? timed[i + 1].time_ms : start + 3000);
     var text = timed[i].text;
     var body = /<\d{1,6}(?::\d{1,6})?>/.test(text) ? wordsOf(text, start, end) : text;
+    // 词级 Ruby 注音（API row.rubies → 词第 4 元素）；仅逐词 body 可挂载，无该字段时行为不变
+    if (Array.isArray(body)) applyWordRubies(body, timed[i].rubies);
     // TTML 源拆出的行属性由 structured 协议第 4 项传回宿主。
     var ext = null;
     if (timed[i].attrs) {
@@ -370,6 +410,11 @@ function buildStructuredFromVersions(lyricLines, fields, song) {
   }
   if (lyricLines.timing) {
     out.timing = lyricLines.timing;
+  }
+  // bodyDur = <body dur> 参考总时长（AMLL 规范：可选、仅供参考），TTML 时间字符串原文透传，
+  // 宿主写回 <body dur="..."> 不做转换；API 行为 body_dur（snake_case），协议字段为 bodyDur（驼峰）
+  if (lyricLines.body_dur) {
+    out.bodyDur = lyricLines.body_dur;
   }
   var originalLang = lyricLines.language
     || (originalVer && (originalVer.ttml_lang || originalVer.lang))
